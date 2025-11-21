@@ -1,0 +1,134 @@
+﻿/* src/styles/auth.css */
+
+/* Layout geral das telas de auth */
+
+.auth-layout {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1.25rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  background: radial-gradient(
+    circle at top left,
+    rgba(15, 23, 42, 0.98),
+    rgba(15, 23, 42, 0.96)
+  );
+  border-radius: 32px;
+  padding: 2.25rem 2rem 1.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(22px);
+}
+
+@media (min-width: 768px) {
+  .auth-card {
+    padding: 2.5rem 2.5rem 2rem;
+    border-radius: 36px;
+  }
+}
+
+.auth-header {
+  margin-bottom: 1.75rem;
+}
+
+.auth-title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.35rem;
+}
+
+.auth-subtitle {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+/* Formulário genérico */
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.form-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.form-input {
+  height: 2.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background-color: rgba(15, 23, 42, 0.95);
+  color: var(--text-primary);
+  padding: 0 1rem;
+  font-size: 0.9rem;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.form-input::placeholder {
+  color: var(--text-muted-weak);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: var(--focus-ring);
+  background-color: rgba(15, 23, 42, 1);
+}
+
+/* Footer da tela de login / verify */
+
+.auth-footer {
+  margin-top: 1.75rem;
+  text-align: center;
+}
+
+.auth-footer-text {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.auth-caption {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted-weak);
+}
+
+/* Botão-link (uso em "Faça seu cadastro") */
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 0.25rem;
+  font-size: inherit;
+  font-weight: 500;
+  color: var(--accent-alt);
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    color var(--transition-fast),
+    text-shadow var(--transition-fast);
+}
+
+.link-button:hover {
+  text-decoration: underline;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+}

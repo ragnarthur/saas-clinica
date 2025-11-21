@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-service",
+  "version": "1.0.0",
+  "description": "Microserviço de disparo de mensagens WhatsApp para o SaaS médico",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "saas",
+    "clinic"
+  ],
+  "author": "Arthur & Partner",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0"
+  }
+}

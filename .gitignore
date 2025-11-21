@@ -1,0 +1,43 @@
+# --- Python / Django ---
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+db.sqlite3
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Arquivos de configuração local
+*.log
+*.pot
+*.py[co]
+*.mo
+
+# Django stuff
+/staticfiles/
+media/
+*.pid
+
+# VSCode / IDE
+.vscode/
+.idea/
+*.swp
+
+# --- Configuração sensível ---
+.env
+*.env
+
+# --- Node / Vite (frontend) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.DS_Store
+
+# Sistema operacional
+.DS_Store
+Thumbs.db

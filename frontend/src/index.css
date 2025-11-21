@@ -1,0 +1,142 @@
+/* src/index.css */
+
+/* Reset básico */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Tema */
+  --bg-body: #020617;
+  --bg-body-gradient: radial-gradient(
+    circle at top left,
+    #0f172a 0,
+    #020617 52%,
+    #020617 100%
+  );
+
+  --bg-card: #020617;
+  --border-subtle: #1f2937;
+
+  --accent: #22c55e; /* verde */
+  --accent-alt: #38bdf8; /* azul */
+  --accent-gradient: linear-gradient(135deg, #22c55e, #38bdf8);
+  --accent-soft: rgba(56, 189, 248, 0.14);
+
+  --text-primary: #e5e7eb;
+  --text-muted: #9ca3af;
+  --text-muted-weak: #6b7280;
+
+  --danger: #f97373;
+  --danger-soft: rgba(248, 113, 113, 0.16);
+  --success: #22c55e;
+  --success-soft: rgba(34, 197, 94, 0.16);
+
+  --focus-ring: 0 0 0 1px rgba(148, 163, 184, 0.1),
+    0 0 0 3px rgba(56, 189, 248, 0.55);
+
+  --radius-lg: 24px;
+  --radius-md: 12px;
+  --radius-pill: 999px;
+
+  --shadow-soft: 0 24px 60px rgba(15, 23, 42, 0.9);
+
+  --transition-fast: 150ms ease-out;
+  --transition-med: 220ms ease-out;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  color: var(--text-primary);
+  background-color: var(--bg-body);
+  background-image: var(--bg-body-gradient);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* Utilitários simples */
+.text-muted {
+  color: var(--text-muted);
+}
+
+.text-center {
+  text-align: center;
+}
+
+/* Botão primário genérico (usado em login, cadastro etc.) */
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-pill);
+  border: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #0f172a;
+  background-image: var(--accent-gradient);
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    filter var(--transition-fast),
+    opacity var(--transition-fast);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.65);
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  box-shadow: none;
+}
+
+.primary-button:not(:disabled):hover {
+  filter: brightness(1.07);
+  transform: translateY(-1px);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
+}
+
+.primary-button:not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.75);
+}
+
+/* Alerts genéricos */
+.alert {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+}
+
+.alert-error {
+  background-color: var(--danger-soft);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+}
+
+.alert-success {
+  background-color: var(--success-soft);
+  color: #bbf7d0;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
