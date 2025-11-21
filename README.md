@@ -382,4 +382,3 @@ saas-medico/
 
 ## Licença
 
-Defina aqui a licença (por exemplo, MIT, GPL, etc.), de acordo com como você pretende distribuir o projeto.
