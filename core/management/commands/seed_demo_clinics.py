@@ -19,23 +19,48 @@ from core.models import (
 
 class Command(BaseCommand):
     """
-    Popula o banco com dados de teste para o SaaS de clínicas.
+    Popula o banco com dados de teste para o SaaS de clínicas multi-tenant.
+
+    Estrutura gerada:
 
     - 2 usuários SAAS_ADMIN (super admins do sistema)
-    - 3 clínicas
-      - 2 CLINIC_OWNER por clínica (donos/admins)
-      - 3 SECRETARY por clínica (cada uma vinculada a um médico)
-      - 3 DOCTOR por clínica (com DoctorProfile)
+      * saas_admin1 / teste123
+      * saas_admin2 / teste123
+
+    - 3 clínicas (tenants)
+      - Clínica Vida Plena       (schema_name: vida_plena)
+      - Clínica Bem Estar        (schema_name: bem_estar)
+      - Clínica Horizonte Saúde  (schema_name: horizonte_saude)
+
+    Para cada clínica:
+      - 2 CLINIC_OWNER (donos/admins da clínica)
+        * <schema>_owner1 / teste123
+        * <schema>_owner2 / teste123
+
+      - 3 DOCTOR por clínica (com DoctorProfile + gender setado)
+        * <schema>_dr1 / teste123
+        * <schema>_dr2 / teste123
+        * <schema>_dr3 / teste123
+
+      - 3 SECRETARY por clínica (cada uma vinculada a um médico específico)
+        * <schema>_secretaria1 (atua com dr1)
+        * <schema>_secretaria2 (atua com dr2)
+        * <schema>_secretaria3 (atua com dr3)
+
       - 20 pacientes por médico (CustomUser + PatientProfile) com nomes fictícios
-      - ~10 agendamentos por médico
-    - Cria documentos legais DEMO e aplica UserConsent para todos os usuários
-      (para ambiente de desenvolvimento, eliminando o 403 de consentimento LGPD).
+        * usernames no padrão: <schema>_drX_pacY / teste123
+
+      - ~10 agendamentos por médico, com horários e status variados
+
+    Além disso:
+      - Cria documentos legais DEMO e aplica UserConsent para todos os usuários
+        (para ambiente de desenvolvimento, eliminando o 403 de consentimento LGPD).
 
     Uso:
         python manage.py seed_demo_clinics
     """
 
-    help = "Cria dados fake pra testar o SaaS de clínicas."
+    help = "Cria dados fake multi-tenant pra testar o SaaS de clínicas."
 
     def handle(self, *args, **options):
         # usado para gerar CPFs/nomes únicos de pacientes
@@ -151,7 +176,7 @@ class Command(BaseCommand):
         """
         Para cada clínica:
         - 2 CLINIC_OWNER (donos/admins da clínica)
-        - 3 DOCTOR (+ DoctorProfile)
+        - 3 DOCTOR (+ DoctorProfile, gender setado pra Dr/Dra)
         - 3 SECRETARY (cada uma vinculada a um médico específico)
         - 20 pacientes por médico (CustomUser + PatientProfile) com nomes fictícios
         """
@@ -178,11 +203,17 @@ class Command(BaseCommand):
                     "role": CustomUser.Role.CLINIC_OWNER,
                 },
             )
+            # garante vínculo de tenant e role corretos mesmo se já existisse
+            user.clinic = clinic
+            user.role = CustomUser.Role.CLINIC_OWNER
+
             if created:
                 user.set_password("teste123")
-                user.first_name = f"Owner {i}"
-                user.last_name = clinic.name
-                user.save()
+            user.first_name = f"Owner {i}"
+            user.last_name = clinic.name
+            user.save()
+
+            if created:
                 self.stdout.write(
                     self.style.SUCCESS(
                         f"    [+] CLINIC_OWNER: {username} / senha: teste123"
@@ -214,13 +245,16 @@ class Command(BaseCommand):
                 },
             )
 
-            # mesmo se já existir, garantimos nomes e clínica/role certos
+            # mesmo se já existir, garantimos nomes, gênero, clínica e role certos
             user.clinic = clinic
             user.role = CustomUser.Role.DOCTOR
             user.first_name = seed["first_name"]
             user.last_name = seed["last_name"]
+            user.gender = seed["gender"]  # alimenta get_display_name_with_title
+
             if created:
                 user.set_password("teste123")
+
             user.save()
 
             display_name = build_doctor_display_name(
@@ -233,8 +267,6 @@ class Command(BaseCommand):
                 defaults={
                     "crm": f"CRM{clinic_index:02d}{i:03d}",
                     "specialty": "Clínico Geral",
-                    # se você tiver um campo gender no DoctorProfile, descomente:
-                    # "gender": seed["gender"],
                 },
             )
 
@@ -276,7 +308,6 @@ class Command(BaseCommand):
             user.role = CustomUser.Role.SECRETARY
             user.first_name = seed["first_name"]
             user.last_name = seed["last_name"]
-            # aqui assumo que CustomUser tem o campo doctor_for_secretary
             user.doctor_for_secretary = doctor
 
             if created:
@@ -361,16 +392,16 @@ class Command(BaseCommand):
                     "role": CustomUser.Role.PATIENT,
                 },
             )
+            # garante tenant/role corretos mesmo se já existia
+            user.clinic = clinic
+            user.role = CustomUser.Role.PATIENT
+
             if created:
                 user.set_password("teste123")
                 user.first_name = first_name
                 user.last_name = last_name
-                user.save()
-                self.stdout.write(
-                    self.style.SUCCESS(
-                        f"        [+] PATIENT user criado: {username} / senha: teste123"
-                    )
-                )
+
+            user.save()
 
             # cpf único simples só pra seed (não é CPF real)
             cpf = f"{self.patient_counter:011d}"
@@ -388,7 +419,8 @@ class Command(BaseCommand):
             if pp_created:
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f"        [+] PatientProfile criado para {username} (CPF {cpf}, {full_name})"
+                        f"        [+] PatientProfile criado para {username} "
+                        f"(CPF {cpf}, {full_name})"
                     )
                 )
 

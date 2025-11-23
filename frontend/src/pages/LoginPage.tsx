@@ -1,8 +1,9 @@
 ﻿// src/pages/LoginPage.tsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/useAuth";
+import { APP_NAME, APP_TAGLINE } from "../config/appConfig";
 
 type LoginResponse = {
   access: string;
@@ -17,6 +18,11 @@ const LoginPage: React.FC = () => {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // título da aba para tela pública
+  useEffect(() => {
+    document.title = `Login · ${APP_NAME}`;
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -62,10 +68,8 @@ const LoginPage: React.FC = () => {
     <div className="auth-layout">
       <div className="auth-card">
         <header className="auth-header">
-          <h1 className="auth-title">Login da Clínica</h1>
-          <p className="auth-subtitle">
-            Acesse o painel de agendamentos e gestão da sua clínica.
-          </p>
+          <h1 className="auth-title">Acesse o {APP_NAME}</h1>
+          <p className="auth-subtitle">{APP_TAGLINE}</p>
         </header>
 
         {error && <div className="alert alert-error">{error}</div>}
@@ -120,7 +124,7 @@ const LoginPage: React.FC = () => {
             </button>
           </p>
           <p className="auth-caption">
-            SaaS Médico · Multi-clínica · LGPD Ready 🩺
+            {APP_NAME} · Multi-clínica · LGPD Ready 🩺
           </p>
         </footer>
       </div>

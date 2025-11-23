@@ -1,8 +1,11 @@
-# core/views.py
+from django.utils import timezone
 from rest_framework import viewsets, permissions, exceptions, status
 from rest_framework.permissions import BasePermission
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView as SimpleJWTTokenObtainPairView,
+)
 
 from .models import (
     PatientProfile,
@@ -12,6 +15,7 @@ from .models import (
     LegalDocument,
     UserConsent,
     Clinic,
+    EmailVerificationToken,
 )
 from .serializers import (
     PatientProfileSerializer,
@@ -124,26 +128,31 @@ class PatientViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
+        # Admin global vê todos os pacientes, independente da clínica
         if user.is_superuser or user.role == CustomUser.Role.SAAS_ADMIN:
             return PatientProfile.objects.all()
 
-        if not user.clinic:
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
+
+        if not clinic:
             return PatientProfile.objects.none()
 
-        return PatientProfile.objects.filter(clinic=user.clinic)
+        # Usa helper for_tenant para padronizar o filtro por clínica
+        return PatientProfile.objects.for_tenant(clinic)
 
     def perform_create(self, serializer):
         user = self.request.user
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
 
-        if not user.clinic:
+        if not clinic:
             raise exceptions.ValidationError(
                 "Usuários sem clínica não podem cadastrar pacientes."
             )
 
-        patient = serializer.save(clinic=user.clinic)
+        patient = serializer.save(clinic=clinic)
         create_audit_log(
             user=user,
-            clinic=user.clinic,
+            clinic=clinic,
             target_model="PatientProfile",
             target_id=patient.id,
             action=AuditLog.Action.CREATE,
@@ -151,11 +160,12 @@ class PatientViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         user = self.request.user
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
         instance = self.get_object()
         patient = serializer.save()
         create_audit_log(
             user=user,
-            clinic=user.clinic,
+            clinic=clinic,
             target_model="PatientProfile",
             target_id=patient.id,
             action=AuditLog.Action.UPDATE,
@@ -164,8 +174,8 @@ class PatientViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         user = self.request.user
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
         patient_id = instance.id
-        clinic = instance.clinic
         instance.delete()
         create_audit_log(
             user=user,
@@ -211,11 +221,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         if user.is_superuser or user.role == CustomUser.Role.SAAS_ADMIN:
             return base_qs
 
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
+
         # Sem clínica => nada
-        if not user.clinic:
+        if not clinic:
             return base_qs.none()
 
-        qs = base_qs.filter(clinic=user.clinic)
+        qs = base_qs.filter(clinic=clinic)
 
         if user.role == CustomUser.Role.DOCTOR:
             # Médico vê só a própria agenda
@@ -235,16 +247,17 @@ class AppointmentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
 
-        if not user.clinic:
+        if not clinic:
             raise exceptions.ValidationError(
                 "Usuários sem clínica não podem criar agendamentos."
             )
 
-        appointment = serializer.save(clinic=user.clinic)
+        appointment = serializer.save(clinic=clinic)
         create_audit_log(
             user=user,
-            clinic=user.clinic,
+            clinic=clinic,
             target_model="Appointment",
             target_id=appointment.id,
             action=AuditLog.Action.CREATE,
@@ -252,13 +265,14 @@ class AppointmentViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         user = self.request.user
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
         instance = self.get_object()
         old_status = instance.status  # guarda status anterior
 
         appointment = serializer.save()
         create_audit_log(
             user=user,
-            clinic=user.clinic,
+            clinic=clinic,
             target_model="Appointment",
             target_id=appointment.id,
             action=AuditLog.Action.UPDATE,
@@ -274,8 +288,8 @@ class AppointmentViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         user = self.request.user
+        clinic = getattr(self.request, "clinic", None) or getattr(user, "clinic", None)
         appointment_id = instance.id
-        clinic = instance.clinic
         instance.delete()
         create_audit_log(
             user=user,
@@ -332,7 +346,8 @@ class PatientRegisterView(APIView):
 
     - Não exige autenticação
     - Cria User (role PATIENT) + PatientProfile
-    - Registra UserConsent para TERMOS e PRIVACIDADE ativos
+    - Registra UserConsent para TERMOS, PRIVACIDADE e CONSENTIMENTO ativos
+    - Envia e-mail com token de verificação
     """
 
     permission_classes = [permissions.AllowAny]
@@ -349,7 +364,10 @@ class PatientRegisterView(APIView):
                 "email": user.email,
                 "full_name": patient.full_name,
                 "clinic_id": str(patient.clinic_id),
-                "detail": "Paciente cadastrado com sucesso e consentimentos registrados.",
+                "detail": (
+                    "Paciente cadastrado com sucesso. "
+                    "Enviamos um e-mail com link de confirmação para ativar o acesso."
+                ),
             },
             status=status.HTTP_201_CREATED,
         )
@@ -515,8 +533,6 @@ class StaffUserViewSet(viewsets.ModelViewSet):
         return CustomUser.objects.none()
 
 
-# core/views.py
-
 class MeView(APIView):
     """
     Retorna dados do usuário autenticado + clínica + médico de referência.
@@ -572,3 +588,95 @@ class MeView(APIView):
         }
 
         return Response(data, status=status.HTTP_200_OK)
+
+
+class VerifyEmailView(APIView):
+    """
+    Confirma o e-mail de um usuário recém-cadastrado.
+
+    POST /api/auth/verify-email/  { "token": "<uuid-hex>" }
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        token = request.data.get("token")
+
+        if not token:
+            return Response(
+                {"detail": "Token não informado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            ev = EmailVerificationToken.objects.select_related("user").get(
+                token=token,
+                is_used=False,
+            )
+        except EmailVerificationToken.DoesNotExist:
+            return Response(
+                {"detail": "Token inválido ou já utilizado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = ev.user
+
+        # Marca token como usado e ativa usuário
+        ev.is_used = True
+        ev.used_at = timezone.now()
+        ev.save(update_fields=["is_used", "used_at"])
+
+        user.is_active = True
+        user.is_verified = True
+        user.save(update_fields=["is_active", "is_verified"])
+
+        clinic = getattr(user, "clinic", None)
+        create_audit_log(
+            user=user,
+            clinic=clinic,
+            target_model="CustomUser",
+            target_id=user.id,
+            action=AuditLog.Action.UPDATE,
+            changes={"email_verified": True},
+        )
+
+        return Response(
+            {"detail": "E-mail verificado com sucesso. Você já pode fazer login."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class LoggingTokenObtainPairView(SimpleJWTTokenObtainPairView):
+    """
+    Variante do TokenObtainPairView que registra LOGIN no AuditLog
+    quando o JWT é obtido com sucesso.
+
+    - Mantém exatamente o mesmo payload de resposta do SimpleJWT;
+    - Usa o username enviado no corpo da requisição para identificar o usuário.
+    """
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+
+        # Só registra LOGIN se o JWT foi gerado com sucesso
+        if response.status_code == status.HTTP_200_OK:
+            username = request.data.get("username")
+
+            if username:
+                try:
+                    user = CustomUser.objects.get(username=username)
+                except CustomUser.DoesNotExist:
+                    user = None
+
+                if user is not None:
+                    clinic = getattr(user, "clinic", None)
+                    create_audit_log(
+                        user=user,
+                        clinic=clinic,
+                        target_model="CustomUser",
+                        target_id=user.id,
+                        action=AuditLog.Action.LOGIN,
+                        changes=None,
+                    )
+
+        return response

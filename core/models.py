@@ -1,9 +1,13 @@
-# core/models.py
 import uuid
+import hashlib
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps
+from fernet_fields import EncryptedCharField, EncryptedTextField
+
+from .tenancy import TenantManager
 
 
 # --- UTILS / BASES ---
@@ -197,6 +201,31 @@ class UserConsent(models.Model):
         return f"{self.user.email} aceitou {self.document}"
 
 
+class EmailVerificationToken(TimeStampedModel):
+    """
+    Token simples para verificação de e-mail.
+
+    - Vinculado a um usuário
+    - Pode ser usado uma única vez
+    """
+
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="email_verification_tokens",
+    )
+    token = models.CharField(max_length=64, unique=True)
+    is_used = models.BooleanField(default=False)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Token de Verificação de E-mail"
+        verbose_name_plural = "Tokens de Verificação de E-mail"
+
+    def __str__(self):
+        return f"{self.user.email} - {self.token}"
+
+
 class AuditLog(TimeStampedModel):
     """
     Log de ações sensíveis, pensando LGPD:
@@ -240,6 +269,9 @@ class AuditLog(TimeStampedModel):
         help_text="Diferenças de estado (antes/depois) em updates.",
     )
 
+    # Manager com helper de tenant
+    objects = TenantManager()
+
     class Meta:
         verbose_name = "Log de Auditoria"
         verbose_name_plural = "Logs de Auditoria"
@@ -278,14 +310,50 @@ class PatientProfile(TimeStampedModel):
     clinic = models.ForeignKey(
         Clinic, on_delete=models.CASCADE
     )  # Paciente pertence a uma clínica
+
+    # CPF criptografado no banco
+    cpf = EncryptedCharField(
+        max_length=14,
+        help_text="CPF criptografado (apenas app exibe em texto).",
+    )
+
+    # Hash do CPF normalizado (somente dígitos) para busca/uniqueness
+    cpf_hash = models.CharField(
+        max_length=64,
+        unique=True,
+        editable=False,
+        null=True,
+        blank=True,
+        help_text="Hash SHA-256 do CPF normalizado (somente dígitos).",
+    )
+
     full_name = models.CharField(max_length=255)
-    cpf = models.CharField(
-        max_length=14, unique=True
-    )  # Idealmente criptografado futuramente
     phone = models.CharField(max_length=20)
+
+    # Manager com helper de tenant
+    objects = TenantManager()
 
     def __str__(self):
         return self.full_name
+
+    def _build_cpf_hash(self) -> str | None:
+        """
+        Normaliza o CPF (só dígitos) e gera hash SHA-256.
+        Retorna None se não houver CPF.
+        """
+        if not self.cpf:
+            return None
+        normalized = "".join(filter(str.isdigit, str(self.cpf)))
+        if not normalized:
+            return None
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def save(self, *args, **kwargs):
+        # sempre recalcula o hash antes de salvar
+        cpf_hash = self._build_cpf_hash()
+        if cpf_hash:
+            self.cpf_hash = cpf_hash
+        super().save(*args, **kwargs)
 
 
 # --- AGENDAMENTO / APPOINTMENT ---
@@ -337,11 +405,14 @@ class Appointment(TimeStampedModel):
         default=Status.REQUESTED,
     )
 
-    # Em produção: idealmente criptografado com lib (ex: django-cryptography)
-    clinical_notes = models.TextField(
+    # Em produção: idealmente criptografado também
+    clinical_notes = EncryptedTextField(
         blank=True,
-        help_text="Notas clínicas (idealmente criptografadas; acesso só do médico).",
+        help_text="Notas clínicas criptografadas; acesso só do médico.",
     )
+
+    # Manager com helper de tenant
+    objects = TenantManager()
 
     class Meta:
         verbose_name = "Agendamento"

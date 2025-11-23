@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
+import { APP_NAME } from "../config/appConfig";
 
 const VerifyEmailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -19,6 +20,11 @@ const VerifyEmailPage: React.FC = () => {
       ? "Confirmando seu cadastro. Aguarde..."
       : "Token de verificação não encontrado."
   );
+
+  // título da aba
+  useEffect(() => {
+    document.title = `Confirmação de e-mail · ${APP_NAME}`;
+  }, []);
 
   useEffect(() => {
     // sem token -> nada a fazer aqui, já está em erro pelo estado inicial

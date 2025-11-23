@@ -42,10 +42,13 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    # api 
+    # API / DRF
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+
+    # Third-Party Apps
+    'fernet_fields',
 
     # Local Apps (Nossos módulos)
     'core',
@@ -59,6 +62,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    "core.middleware.tenant.TenantMiddleware",
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -82,16 +86,18 @@ REST_FRAMEWORK = {
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60), # Token curto (segurança)
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),    # Token longo (conveniência)
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),  # Token curto (segurança)
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),     # Token longo (conveniência)
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+
 # ==============================================================================
 # CORS (Frontend React em localhost:5173)
 # ==============================================================================
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -106,7 +112,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [], # Se criarmos templates globais, a pasta vai aqui
+        'DIRS': [],  # Se criarmos templates globais, a pasta vai aqui
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -125,8 +131,8 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # ==============================================================================
 # DATABASE (PostgreSQL)
 # ==============================================================================
-# Lê do arquivo .env ou usa valores padrão (fallback)
 
+# Lê do arquivo .env ou usa valores padrão (fallback)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -185,6 +191,37 @@ STATIC_URL = 'static/'
 # Para uploads de arquivos (ex: foto do médico)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+
+# ==============================================================================
+# EMAIL / VERIFICAÇÃO DE CONTA
+# ==============================================================================
+
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.console.EmailBackend",
+)
+
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    "no-reply@docflowmed.local",
+)
+
+FRONTEND_BASE_URL = os.getenv(
+    "FRONTEND_BASE_URL",
+    "http://localhost:5173",
+)
+
+# Config SMTP (Gmail / outros provedores)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "25"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "False") == "True"
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False") == "True"
+
+
 
 # ==============================================================================
 # WHATSAPP SERVICE (Microserviço Node)

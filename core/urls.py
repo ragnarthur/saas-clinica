@@ -16,7 +16,9 @@ from .views import (
     PublicActiveLegalDocsView,
     ConsentActiveDocsView,
     ConsentAcceptView,
-    MeView,  # <- NOVO
+    MeView,  
+    LoggingTokenObtainPairView,
+    VerifyEmailView,
 )
 
 router = DefaultRouter()
@@ -27,7 +29,7 @@ router.register(r"staff", StaffUserViewSet, basename="staff")
 urlpatterns = [
     # ------------------ AUTENTICAÇÃO (JWT) ------------------
     # usado pelo frontend em /api/auth/login/
-    path("auth/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("auth/login/", LoggingTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
     # dados do usuário autenticado (secretária / médico / owner)
@@ -50,6 +52,10 @@ urlpatterns = [
         PublicActiveLegalDocsView.as_view(),
         name="legal-docs-active",
     ),
+
+    # ------------------ VERIFICAÇÃO DE EMAIL ------------------
+
+    path("auth/verify-email/", VerifyEmailView.as_view(), name="verify-email"),
 
     # ------------------ PACIENTE AUTENTICADO ------------------
     # paciente pedindo agendamento

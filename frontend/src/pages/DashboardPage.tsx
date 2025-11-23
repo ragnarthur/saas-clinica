@@ -1,38 +1,8 @@
 ﻿// src/pages/DashboardPage.tsx
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/client";
-import { useAuth } from "../auth/useAuth";
+import type { AppointmentDTO, MeDTO } from "../types";
 import "../styles/dashboard.css";
-
-type AppointmentDTO = {
-  id: string;
-  start_time: string;
-  end_time: string;
-  status: string;
-  patient_name: string;
-  doctor_name: string;
-  // novo: gênero do médico vindo do backend (ex: "M" / "F")
-  doctor_gender?: "M" | "F" | null;
-};
-
-type MeResponse = {
-  id: string;
-  username: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  role: string;
-  clinic: {
-    id: string;
-    name: string;
-  } | null;
-  doctor_for_secretary: {
-    id: string;
-    name: string;
-    // novo: gênero também no /auth/me/
-    gender?: "M" | "F" | null;
-  } | null;
-};
 
 const dateTimeFormatter = new Intl.DateTimeFormat("pt-BR", {
   dateStyle: "short",
@@ -79,45 +49,23 @@ function getStatusClass(status: string): string {
   }
 }
 
-/**
- * Monta "Dr. Fulano" ou "Dra. Fulana" com base no gênero.
- * - Se o nome já vier com Dr/Dra, não duplica.
- * - Se o gênero não vier, devolve o nome puro.
- */
+/** Prefixa Dr./Dra. se o nome ainda não tiver título */
 function formatDoctorName(
   name: string | null | undefined,
   gender?: "M" | "F" | null
 ): string {
   if (!name) return "";
-
   const normalized = name.trim();
-
-  // se já tiver título, só retorna
   const hasTitle = /^Dr\.?\s|^Dra\.?\s/i.test(normalized);
-  if (hasTitle) {
-    return normalized;
-  }
+  if (hasTitle) return normalized;
 
-  let prefix: string | null = null;
-
-  if (gender === "M") {
-    prefix = "Dr.";
-  } else if (gender === "F") {
-    prefix = "Dra.";
-  }
-
-  // se não sabemos o gênero, não forçamos título
-  if (!prefix) {
-    return normalized;
-  }
-
-  return `${prefix} ${normalized}`;
+  if (gender === "M") return `Dr. ${normalized}`;
+  if (gender === "F") return `Dra. ${normalized}`;
+  return normalized;
 }
 
 const DashboardPage: React.FC = () => {
-  const { logout } = useAuth();
-
-  const [me, setMe] = useState<MeResponse | null>(null);
+  const [me, setMe] = useState<MeDTO | null>(null);
   const [appointments, setAppointments] = useState<AppointmentDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,9 +79,8 @@ const DashboardPage: React.FC = () => {
         setLoading(true);
         setError(null);
 
-        // carrega /auth/me/ e /appointments/ em paralelo
         const [meData, appointmentsData] = await Promise.all([
-          apiRequest<MeResponse>("/auth/me/", { method: "GET" }),
+          apiRequest<MeDTO>("/auth/me/", { method: "GET" }),
           apiRequest<AppointmentDTO[]>("/appointments/", { method: "GET" }),
         ]);
 
@@ -185,7 +132,6 @@ const DashboardPage: React.FC = () => {
         err instanceof Error
           ? err.message
           : "Não foi possível atualizar o status. Tente novamente.";
-      // depois dá pra trocar por toast bonitinho
       alert(msg);
     } finally {
       setUpdatingId(null);
@@ -200,12 +146,10 @@ const DashboardPage: React.FC = () => {
     (a) => a.status === "REQUESTED"
   ).length;
 
-  // ordena pelos mais próximos primeiro
-  const sortedAppointments = appointments.slice().sort((a, b) =>
-    a.start_time.localeCompare(b.start_time)
-  );
+  const sortedAppointments = appointments
+    .slice()
+    .sort((a, b) => a.start_time.localeCompare(b.start_time));
 
-  // strings de exibição do usuário / clínica / médico
   const displayName: string = me
     ? `${me.first_name || me.username}${
         me.last_name ? ` ${me.last_name}` : ""
@@ -223,10 +167,18 @@ const DashboardPage: React.FC = () => {
     ? formatDoctorName(actingDoctorRaw.name, actingDoctorRaw.gender)
     : null;
 
+  const subtitle = [
+    displayName && `Logado como ${displayName}`,
+    clinicName && `Clínica ${clinicName}`,
+    actingDoctorName && `Atuando com ${actingDoctorName}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className="dashboard-layout">
       <div className="dashboard-shell">
-        {/* Header */}
+        {/* Cabeçalho da página (agora sem navbar) */}
         <header className="dashboard-header">
           <div className="dashboard-title-block">
             <h1 className="dashboard-title">Painel da Clínica</h1>
@@ -234,28 +186,11 @@ const DashboardPage: React.FC = () => {
               Visão geral dos agendamentos do dia e próximos horários.
             </p>
 
-            {me && (
+            {subtitle && (
               <p className="dashboard-subtitle dashboard-subtitle-secondary">
-                Logado como <strong>{displayName}</strong>
-                {clinicName && <> · {clinicName}</>}
-                {actingDoctorName && (
-                  <>
-                    {" · Atuando com "}
-                    <strong>{actingDoctorName}</strong>
-                  </>
-                )}
+                {subtitle}
               </p>
             )}
-          </div>
-
-          <div className="dashboard-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={logout}
-            >
-              Sair
-            </button>
           </div>
         </header>
 
@@ -264,7 +199,9 @@ const DashboardPage: React.FC = () => {
           <article className="metric-card">
             <div className="metric-label">Agendamentos</div>
             <div className="metric-value">{totalAppointments}</div>
-            <div className="metric-caption">Total carregado para a clínica</div>
+            <div className="metric-caption">
+              Total carregado para a clínica
+            </div>
           </article>
 
           <article className="metric-card">
@@ -321,7 +258,6 @@ const DashboardPage: React.FC = () => {
 
                   {sortedAppointments.map((appt) => (
                     <div key={appt.id} className="appointment-row">
-                      {/* Paciente + médico */}
                       <div className="appointment-cell">
                         <span className="appointment-label">Paciente</span>
                         <span className="appointment-value">
@@ -334,11 +270,13 @@ const DashboardPage: React.FC = () => {
                           Médico
                         </span>
                         <span className="appointment-value">
-                          {formatDoctorName(appt.doctor_name, appt.doctor_gender)}
+                          {formatDoctorName(
+                            appt.doctor_name,
+                            appt.doctor_gender
+                          )}
                         </span>
                       </div>
 
-                      {/* Horários */}
                       <div className="appointment-cell">
                         <span className="appointment-label">Início</span>
                         <span className="appointment-value">
@@ -356,7 +294,6 @@ const DashboardPage: React.FC = () => {
                         </span>
                       </div>
 
-                      {/* Status + ações da secretária */}
                       <div className="appointment-cell">
                         <span className="appointment-label">Status</span>
                         <span

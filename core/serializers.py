@@ -1,4 +1,6 @@
-﻿# core/serializers.py
+﻿import hashlib
+import uuid
+
 from rest_framework import serializers
 
 from .models import (
@@ -9,7 +11,32 @@ from .models import (
     CustomUser,
     UserConsent,
     DoctorProfile,
+    EmailVerificationToken,
 )
+from .services.email_client import send_email_verification
+
+
+# ---------- helpers de CPF ----------
+
+
+def normalize_cpf(value: str) -> str:
+    """
+    Remove qualquer coisa que não seja dígito.
+    """
+    if not value:
+        return ""
+    return "".join(filter(str.isdigit, value))
+
+
+def make_cpf_hash(value: str) -> str:
+    """
+    Gera hash SHA-256 do CPF normalizado.
+    """
+    normalized = normalize_cpf(value)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+# ---------- serializers principais ----------
 
 
 class ClinicSerializer(serializers.ModelSerializer):
@@ -45,13 +72,6 @@ class PatientProfileSerializer(serializers.ModelSerializer):
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
-    """
-    Serializer de agendamentos para o painel.
-
-    - patient_name: nome completo do paciente
-    - doctor_name: NOME JÁ COM Dr./Dra. usando get_display_name_with_title()
-    """
-
     patient_name = serializers.CharField(source="patient.full_name", read_only=True)
     doctor_name = serializers.CharField(
         source="doctor.get_display_name_with_title", read_only=True
@@ -121,8 +141,9 @@ class PatientRegistrationSerializer(serializers.Serializer):
         if CustomUser.objects.filter(email=attrs["email"]).exists():
             raise serializers.ValidationError({"email": "E-mail já cadastrado."})
 
-        # 3) CPF único
-        if PatientProfile.objects.filter(cpf=attrs["cpf"]).exists():
+        # 3) CPF único (usa hash, pq o campo real é criptografado)
+        cpf_hash = make_cpf_hash(attrs["cpf"])
+        if PatientProfile.objects.filter(cpf_hash=cpf_hash).exists():
             raise serializers.ValidationError({"cpf": "CPF já cadastrado."})
 
         # 4) senha = confirmação
@@ -166,13 +187,14 @@ class PatientRegistrationSerializer(serializers.Serializer):
         ]:
             validated_data.pop(field, None)
 
-        # User = paciente
+        # User = paciente (agora entra inativo até confirmar e-mail)
         user = CustomUser.objects.create_user(
             username=email,
             email=email,
             clinic=clinic,
             role=CustomUser.Role.PATIENT,
-            is_active=True,
+            is_active=False,
+            is_verified=False,
         )
         user.set_password(password)
         user.first_name = full_name
@@ -192,6 +214,14 @@ class PatientRegistrationSerializer(serializers.Serializer):
         for doc in active_docs:
             UserConsent.objects.get_or_create(user=user, document=doc)
 
+        # Cria token de verificação de e-mail
+        token = uuid.uuid4().hex
+        EmailVerificationToken.objects.create(user=user, token=token)
+
+        # Dispara e-mail (stub - em produção integre com provider real)
+        send_email_verification(user=user, token=token)
+
+        # Mantemos compatibilidade com retorno atual
         return user, patient
 
 
@@ -300,11 +330,6 @@ class StaffUserSerializer(serializers.ModelSerializer):
         write_only=True, required=False, allow_blank=True
     )
 
-    # Campo somente leitura com Dr./Dra. + nome
-    display_name_with_title = serializers.CharField(
-        source="get_display_name_with_title", read_only=True
-    )
-
     class Meta:
         model = CustomUser
         fields = [
@@ -316,16 +341,16 @@ class StaffUserSerializer(serializers.ModelSerializer):
             "role",
             "clinic",
             "clinic_id",
+            "gender",
             "password",
             "crm",
             "specialty",
-            "gender",
             "is_active",
-            "display_name_with_title",
         ]
-        read_only_fields = ["id", "clinic", "display_name_with_title"]
+        read_only_fields = ["id", "clinic"]
         extra_kwargs = {
             "username": {"required": False, "allow_blank": True},
+            "gender": {"required": False, "allow_null": True},
         }
 
     def validate_role(self, value):
