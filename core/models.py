@@ -1,10 +1,14 @@
+# core/models.py
 import uuid
 import hashlib
+import secrets
+from datetime import timedelta
 
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps
+from django.utils import timezone
 from fernet_fields import EncryptedCharField, EncryptedTextField
 
 from .tenancy import TenantManager
@@ -38,11 +42,12 @@ class Clinic(TimeStampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     schema_name = models.SlugField(
-        unique=True, help_text="Identificador único na URL ou DB"
+        unique=True,
+        help_text="Identificador único na URL ou DB",
     )
     is_active = models.BooleanField(default=True)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.name
 
 
@@ -75,7 +80,11 @@ class CustomUser(AbstractUser):
         blank=True,
     )
 
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.PATIENT)
+    role = models.CharField(
+        max_length=20,
+        choices=Role.choices,
+        default=Role.PATIENT,
+    )
 
     # Secretária -> médico principal com quem atua (agenda principal)
     doctor_for_secretary = models.ForeignKey(
@@ -123,8 +132,7 @@ class CustomUser(AbstractUser):
     @property
     def has_active_consent(self) -> bool:
         """
-        Helper para o permission HasActiveConsent:
-        verifica se o usuário aceitou TODOS os documentos legais ativos.
+        Verifica se o usuário aceitou TODOS os documentos legais ativos.
         Usa apps.get_model para evitar import recursivo de core.models.
         """
         LegalDocument = apps.get_model("core", "LegalDocument")
@@ -145,7 +153,7 @@ class CustomUser(AbstractUser):
         Retorna o nome já com Dr. / Dra. quando for médico.
         Para outros papéis, só devolve o nome normal.
         """
-        base = self.get_full_name() or self.username or self.email or ""
+        base = self.get_full_name() or self.username or getattr(self, "email", "") or ""
         if self.role == CustomUser.Role.DOCTOR:
             if self.gender == CustomUser.Gender.FEMALE:
                 prefix = "Dra."
@@ -160,7 +168,7 @@ class CustomUser(AbstractUser):
 
 class LegalDocument(TimeStampedModel):
     """
-    Armazena versões dos Termos de Uso e Política de Privacidade.
+    Armazena versões dos Termos de Uso, Política de Privacidade, etc.
     """
 
     class DocType(models.TextChoices):
@@ -175,9 +183,17 @@ class LegalDocument(TimeStampedModel):
 
     class Meta:
         unique_together = ["version", "doc_type"]
+        constraints = [
+            # Garante que só exista UMA versão ativa por tipo
+            models.UniqueConstraint(
+                fields=["doc_type"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_legal_document_per_type",
+            )
+        ]
 
-    def __str__(self):
-        return f"{self.doc_type} - v{self.version}"
+    def __str__(self) -> str:
+        return f"{self.get_doc_type_display()} - v{self.version}"
 
 
 class UserConsent(models.Model):
@@ -186,18 +202,31 @@ class UserConsent(models.Model):
     """
 
     user = models.ForeignKey(
-        CustomUser, on_delete=models.CASCADE, related_name="consents"
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="consents",
     )
-    document = models.ForeignKey(LegalDocument, on_delete=models.PROTECT)
+    document = models.ForeignKey(
+        LegalDocument,
+        on_delete=models.PROTECT,
+        related_name="consents",
+    )
 
     # Auditoria técnica
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.TextField(
-        null=True, blank=True, help_text="Dados do navegador/dispositivo"
+        null=True,
+        blank=True,
+        help_text="Dados do navegador/dispositivo",
     )
     agreed_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
+    class Meta:
+        verbose_name = "Consentimento de Usuário"
+        verbose_name_plural = "Consentimentos de Usuários"
+        unique_together = ["user", "document"]
+
+    def __str__(self) -> str:
         return f"{self.user.email} aceitou {self.document}"
 
 
@@ -207,23 +236,53 @@ class EmailVerificationToken(TimeStampedModel):
 
     - Vinculado a um usuário
     - Pode ser usado uma única vez
+    - Usa código numérico de 6 dígitos em `token`
     """
 
     user = models.ForeignKey(
-        CustomUser,
+        "CustomUser",
         on_delete=models.CASCADE,
         related_name="email_verification_tokens",
     )
+    # Armazena o código de 6 dígitos (como string)
     token = models.CharField(max_length=64, unique=True)
     is_used = models.BooleanField(default=False)
     used_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Token de Verificação de E-mail"
         verbose_name_plural = "Tokens de Verificação de E-mail"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.user.email} - {self.token}"
+
+    @classmethod
+    def generate_code_for_user(cls, user: "CustomUser") -> "EmailVerificationToken":
+        """
+        Gera e persiste um código numérico de 6 dígitos, único na tabela.
+
+        - Usa secrets.randbelow para segurança
+        - Define expiração em 30 minutos
+        - Tenta algumas vezes em caso de colisão de unicidade
+        """
+        from django.db import IntegrityError
+
+        for _ in range(5):
+            code = f"{secrets.randbelow(1_000_000):06d}"  # ex: "031942"
+            expires_at = timezone.now() + timedelta(minutes=30)
+            try:
+                return cls.objects.create(
+                    user=user,
+                    token=code,
+                    expires_at=expires_at,
+                )
+            except IntegrityError:
+                # se bater na unique constraint, tenta de novo
+                continue
+
+        # Se chegou aqui, algo está muito errado (provavelmente ambiente de teste)
+        raise RuntimeError("Não foi possível gerar um código de verificação único.")
 
 
 class AuditLog(TimeStampedModel):
@@ -276,7 +335,7 @@ class AuditLog(TimeStampedModel):
         verbose_name = "Log de Auditoria"
         verbose_name_plural = "Logs de Auditoria"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.action} - {self.target_model} ({self.target_object_id})"
 
 
@@ -285,7 +344,9 @@ class AuditLog(TimeStampedModel):
 
 class DoctorProfile(models.Model):
     user = models.OneToOneField(
-        CustomUser, on_delete=models.CASCADE, related_name="doctor_profile"
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="doctor_profile",
     )
     crm = models.CharField(max_length=20)
     specialty = models.CharField(max_length=100)
@@ -300,6 +361,11 @@ class PatientProfile(TimeStampedModel):
     Separado do User para facilitar segurança.
     """
 
+    class Sex(models.TextChoices):
+        MALE = "M", _("Masculino")
+        FEMALE = "F", _("Feminino")
+        NOT_INFORMED = "N", _("Prefiro não informar")
+
     user = models.OneToOneField(
         CustomUser,
         on_delete=models.CASCADE,
@@ -307,9 +373,13 @@ class PatientProfile(TimeStampedModel):
         null=True,
         blank=True,
     )
+
+    # Paciente pertence a uma clínica (tenant)
     clinic = models.ForeignKey(
-        Clinic, on_delete=models.CASCADE
-    )  # Paciente pertence a uma clínica
+        Clinic,
+        on_delete=models.CASCADE,
+        related_name="patients",
+    )
 
     # CPF criptografado no banco
     cpf = EncryptedCharField(
@@ -317,10 +387,9 @@ class PatientProfile(TimeStampedModel):
         help_text="CPF criptografado (apenas app exibe em texto).",
     )
 
-    # Hash do CPF normalizado (somente dígitos) para busca/uniqueness
+    # Hash do CPF normalizado (somente dígitos) para busca e unicidade por clínica
     cpf_hash = models.CharField(
         max_length=64,
-        unique=True,
         editable=False,
         null=True,
         blank=True,
@@ -330,10 +399,35 @@ class PatientProfile(TimeStampedModel):
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20)
 
+    # Novos campos de perfil do paciente
+    sex = models.CharField(
+        max_length=1,
+        choices=Sex.choices,
+        null=True,
+        blank=True,
+        help_text="Sexo do paciente.",
+    )
+    birth_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Data de nascimento do paciente.",
+    )
+
     # Manager com helper de tenant
     objects = TenantManager()
 
-    def __str__(self):
+    class Meta:
+        verbose_name = "Paciente"
+        verbose_name_plural = "Pacientes"
+        constraints = [
+            # Garante que o mesmo CPF (hash) não se repita na mesma clínica.
+            models.UniqueConstraint(
+                fields=["clinic", "cpf_hash"],
+                name="uniq_patient_cpf_hash_per_clinic",
+            )
+        ]
+
+    def __str__(self) -> str:
         return self.full_name
 
     def _build_cpf_hash(self) -> str | None:
@@ -349,7 +443,7 @@ class PatientProfile(TimeStampedModel):
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     def save(self, *args, **kwargs):
-        # sempre recalcula o hash antes de salvar
+        # Sempre recalcula o hash antes de salvar
         cpf_hash = self._build_cpf_hash()
         if cpf_hash:
             self.cpf_hash = cpf_hash
@@ -405,7 +499,7 @@ class Appointment(TimeStampedModel):
         default=Status.REQUESTED,
     )
 
-    # Em produção: idealmente criptografado também
+    # Notas clínicas criptografadas (LGPD)
     clinical_notes = EncryptedTextField(
         blank=True,
         help_text="Notas clínicas criptografadas; acesso só do médico.",
@@ -419,5 +513,5 @@ class Appointment(TimeStampedModel):
         verbose_name_plural = "Agendamentos"
         ordering = ["-start_time"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.clinic} - {self.patient.full_name} ({self.start_time:%d/%m/%Y %H:%M})"

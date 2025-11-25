@@ -1,5 +1,5 @@
-﻿import hashlib
-import uuid
+﻿# core/serializers.py
+import hashlib
 
 from rest_framework import serializers
 
@@ -13,7 +13,6 @@ from .models import (
     DoctorProfile,
     EmailVerificationToken,
 )
-from .services.email_client import send_email_verification
 
 
 # ---------- helpers de CPF ----------
@@ -57,6 +56,8 @@ class PatientProfileSerializer(serializers.ModelSerializer):
             "full_name",
             "cpf",
             "phone",
+            "sex",
+            "birth_date",
             "clinic",
             "user_id",
             "created_at",
@@ -109,6 +110,7 @@ class PatientRegistrationSerializer(serializers.Serializer):
       - clinic_schema_name: slug da clínica (ex: "vida_plena")
       - full_name, cpf, phone, email
       - password, password_confirm
+      - sex (M/F/N), birth_date (dd/mm/aaaa ou ISO)
       - agree_terms, agree_privacy, agree_consent: booleans
     """
 
@@ -119,6 +121,19 @@ class PatientRegistrationSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=6)
     password_confirm = serializers.CharField(write_only=True, min_length=6)
+
+    # novos campos opcionais
+    sex = serializers.ChoiceField(
+        choices=["M", "F", "N"],
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    birth_date = serializers.DateField(
+        required=False,
+        allow_null=True,
+        input_formats=["%d/%m/%Y", "%Y-%m-%d"],
+    )
 
     agree_terms = serializers.BooleanField()
     agree_privacy = serializers.BooleanField()
@@ -143,7 +158,7 @@ class PatientRegistrationSerializer(serializers.Serializer):
 
         # 3) CPF único (usa hash, pq o campo real é criptografado)
         cpf_hash = make_cpf_hash(attrs["cpf"])
-        if PatientProfile.objects.filter(cpf_hash=cpf_hash).exists():
+        if PatientProfile.objects.filter(clinic=clinic, cpf_hash=cpf_hash).exists():
             raise serializers.ValidationError({"cpf": "CPF já cadastrado."})
 
         # 4) senha = confirmação
@@ -177,6 +192,10 @@ class PatientRegistrationSerializer(serializers.Serializer):
         phone = validated_data["phone"]
         password = validated_data["password"]
 
+        # novos campos opcionais
+        sex = validated_data.get("sex")
+        birth_date = validated_data.get("birth_date")
+
         # limpando helpers
         for field in [
             "clinic_schema_name",
@@ -187,14 +206,13 @@ class PatientRegistrationSerializer(serializers.Serializer):
         ]:
             validated_data.pop(field, None)
 
-        # User = paciente (agora entra inativo até confirmar e-mail)
+        # User = paciente (AINDA INATIVO até confirmar o e-mail)
         user = CustomUser.objects.create_user(
             username=email,
             email=email,
             clinic=clinic,
             role=CustomUser.Role.PATIENT,
-            is_active=False,
-            is_verified=False,
+            is_active=False,  # bloqueia login até verificar e-mail
         )
         user.set_password(password)
         user.first_name = full_name
@@ -207,6 +225,8 @@ class PatientRegistrationSerializer(serializers.Serializer):
             full_name=full_name,
             cpf=cpf,
             phone=phone,
+            sex=sex,
+            birth_date=birth_date,
         )
 
         # Registra consentimento para TODOS docs ativos (Termos, Privacidade, Consentimento)
@@ -214,15 +234,12 @@ class PatientRegistrationSerializer(serializers.Serializer):
         for doc in active_docs:
             UserConsent.objects.get_or_create(user=user, document=doc)
 
-        # Cria token de verificação de e-mail
-        token = uuid.uuid4().hex
-        EmailVerificationToken.objects.create(user=user, token=token)
+        # Cria token de verificação de e-mail (código de 6 dígitos)
+        email_token = EmailVerificationToken.generate_code_for_user(user)
 
-        # Dispara e-mail (stub - em produção integre com provider real)
-        send_email_verification(user=user, token=token)
-
-        # Mantemos compatibilidade com retorno atual
-        return user, patient
+        # IMPORTANTE: como estamos usando a Serializer manualmente na view,
+        # podemos devolver uma tupla customizada.
+        return user, patient, email_token
 
 
 class AppointmentRequestSerializer(serializers.Serializer):

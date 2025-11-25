@@ -1,4 +1,3 @@
-# core/tests.py
 from datetime import timedelta
 import hashlib
 
@@ -25,11 +24,12 @@ from .models import (
 
 class PatientRegistrationAndAuthTests(APITestCase):
     """
-    Testes do fluxo público de cadastro de paciente + login JWT.
+    Testes do fluxo público de cadastro de paciente.
 
     Fluxo coberto:
     - POST /api/patients/register/
-    - POST /api/auth/login/ (JWT)
+    - Garante criação de User, PatientProfile e consents.
+    - Garante que o login JWT é BLOQUEADO (401) até a verificação de e-mail.
     """
 
     def setUp(self):
@@ -62,9 +62,9 @@ class PatientRegistrationAndAuthTests(APITestCase):
         Deve:
         - Registrar paciente via /api/patients/register/
         - Criar User (role PATIENT) vinculado à clínica
-        - Criar PatientProfile
+        - Criar PatientProfile com hash de CPF
         - Criar UserConsent para docs ativos
-        - Permitir login JWT com email+senha
+        - BLOQUEAR login JWT (401) enquanto o e-mail não foi verificado.
         """
         payload = {
             "clinic_schema_name": self.clinic.schema_name,
@@ -91,6 +91,13 @@ class PatientRegistrationAndAuthTests(APITestCase):
         self.assertEqual(user.role, CustomUser.Role.PATIENT)
         self.assertEqual(user.clinic, self.clinic)
 
+        # Se existir flag de verificação de e-mail, ela deve estar falsa
+        if hasattr(user, "email_verified"):
+            self.assertFalse(
+                user.email_verified,
+                "Usuário recém-cadastrado não deveria estar com email_verified=True.",
+            )
+
         # Verifica se PatientProfile foi criado usando o HASH do CPF
         normalized = "".join(filter(str.isdigit, payload["cpf"]))
         expected_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
@@ -107,7 +114,7 @@ class PatientRegistrationAndAuthTests(APITestCase):
             consents.count(), 2, "Devia ter 2 registros de consentimento."
         )
 
-        # 2) Login JWT
+        # 2) Login JWT deve ser BLOQUEADO até confirmação de e-mail
         login_payload = {
             "username": email,  # SimpleJWT usa username por padrão
             "password": payload["password"],
@@ -115,9 +122,68 @@ class PatientRegistrationAndAuthTests(APITestCase):
         login_response = self.client.post(
             self.login_url, login_payload, format="json"
         )
-        self.assertEqual(login_response.status_code, status.HTTP_200_OK)
-        self.assertIn("access", login_response.data)
-        self.assertIn("refresh", login_response.data)
+        self.assertEqual(
+            login_response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+            login_response.data,
+        )
+        # Não deve retornar tokens enquanto o e-mail não foi verificado
+        self.assertNotIn("access", login_response.data)
+        self.assertNotIn("refresh", login_response.data)
+
+    def test_patient_registration_requires_all_consents_true(self):
+        """
+        Cadastro deve falhar (400) se qualquer um dos três flags de consentimento
+        vier como False.
+        """
+        payload = {
+            "clinic_schema_name": self.clinic.schema_name,
+            "full_name": "Paciente Sem Consentimento",
+            "cpf": "999.999.999-99",
+            "phone": "(34) 90000-0000",
+            "email": "paciente_sem_consent@example.com",
+            "password": "SenhaForte123",
+            "password_confirm": "SenhaForte123",
+            "agree_terms": False,  # <- propositalmente falso
+            "agree_privacy": True,
+            "agree_consent": True,
+        }
+
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Não sabemos exatamente a chave retornada, então validamos pela mensagem genérica
+        self.assertIn("consent", str(response.data).lower())
+
+    def test_patient_registration_persists_birth_date_and_sex_when_provided(self):
+        """
+        Quando enviados, birth_date (ISO) e sex devem ser persistidos no PatientProfile.
+        """
+        payload = {
+            "clinic_schema_name": self.clinic.schema_name,
+            "full_name": "Paciente com dados extras",
+            "cpf": "321.654.987-00",
+            "phone": "(34) 97777-0000",
+            "email": "paciente_extras@example.com",
+            "password": "SenhaMuitoForte123!",
+            "password_confirm": "SenhaMuitoForte123!",
+            "agree_terms": True,
+            "agree_privacy": True,
+            "agree_consent": True,
+            # novos campos
+            "birth_date": "1990-05-20",  # formato ISO vindo do frontend
+            "sex": "F",
+        }
+
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+
+        user = CustomUser.objects.get(email=payload["email"])
+        patient = PatientProfile.objects.get(user=user)
+
+        # Se birth_date for DateField, str() devolve "YYYY-MM-DD" igualmente
+        self.assertEqual(str(getattr(patient, "birth_date", None)), "1990-05-20")
+        # Campo sex deve refletir o valor enviado
+        self.assertEqual(getattr(patient, "sex", None), "F")
 
 
 class AppointmentCreationTests(APITestCase):
@@ -279,6 +345,7 @@ class ClinicIsolationTests(APITestCase):
         self.assertEqual(resp_b.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp_b.data), 1)
         self.assertEqual(resp_b.data[0]["full_name"], "Paciente B")
+
 
 class MeViewTests(APITestCase):
     """
@@ -617,6 +684,18 @@ class AppointmentIsolationTests(APITestCase):
         )
         self.assertNotIn(str(self.appt_b1.id), returned_ids)
 
+    def test_doctor_b_sees_only_own_appointments_in_clinic_b(self):
+        """
+        Médico B (clínica B) também deve ver apenas seus próprios agendamentos.
+        """
+        token = self._get_token("doc_b", "SenhaDocB123")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        resp = self.client.get(self.appointments_url, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+
+        returned_ids = {item["id"] for item in resp.data}
+        self.assertSetEqual(returned_ids, {str(self.appt_b1.id)})
 
 
 class ConsentPermissionTests(APITestCase):
@@ -774,6 +853,10 @@ class ConsentEndpointsTests(APITestCase):
         resp_docs = self.client.get(self.consent_active_url, format="json")
         self.assertEqual(resp_docs.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp_docs.data), 2)
+        # Cada item deve conter pelo menos doc_type e version
+        first = resp_docs.data[0]
+        self.assertIn("doc_type", first)
+        self.assertIn("version", first)
 
         # 3) Aceita docs
         resp_accept = self.client.post(self.consent_accept_url, format="json")
@@ -784,6 +867,30 @@ class ConsentEndpointsTests(APITestCase):
         resp_allowed = self.client.get(self.patients_url, format="json")
         self.assertEqual(resp_allowed.status_code, status.HTTP_200_OK)
         self.assertEqual(len(resp_allowed.data), 0)
+
+    def test_consent_accept_is_idempotent(self):
+        """
+        Chamar /consent/accept/ mais de uma vez não deve criar
+        consentimentos duplicados.
+        """
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.access_token}")
+
+        # Primeira vez
+        resp_1 = self.client.post(self.consent_accept_url, format="json")
+        self.assertEqual(resp_1.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(UserConsent.objects.filter(user=self.user).count(), 2)
+
+        # Segunda vez (pode retornar 200 ou 201, mas não duplica)
+        resp_2 = self.client.post(self.consent_accept_url, format="json")
+        self.assertIn(
+            resp_2.status_code,
+            (status.HTTP_200_OK, status.HTTP_201_CREATED),
+        )
+        self.assertEqual(
+            UserConsent.objects.filter(user=self.user).count(),
+            2,
+            "Consentimentos não devem ser duplicados em chamadas repetidas.",
+        )
 
 
 class StaffUserAPITests(APITestCase):
@@ -868,6 +975,7 @@ class StaffUserAPITests(APITestCase):
         self.assertEqual(user.doctor_profile.crm, "CRM-99999")
         self.assertEqual(user.doctor_profile.specialty, "Dermatologia")
 
+
 class AuthAuditLogTests(APITestCase):
     """
     Garante que o login JWT via /api/auth/login/ gera um AuditLog
@@ -913,6 +1021,27 @@ class AuthAuditLogTests(APITestCase):
             log,
             "Era esperado um registro de AuditLog de LOGIN após autenticação bem-sucedida.",
         )
+
+    def test_failed_login_does_not_create_audit_log_entry(self):
+        """
+        Tentativa de login inválida não deve gerar AuditLog de LOGIN.
+        """
+        payload = {
+            "username": "user_login_audit",
+            "password": "senha_errada",
+        }
+
+        existing_count = AuditLog.objects.count()
+
+        resp = self.client.post(self.login_url, payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        self.assertEqual(
+            AuditLog.objects.count(),
+            existing_count,
+            "Login inválido não deve gerar registro de AuditLog.",
+        )
+
 
 class EncryptionTests(TestCase):
     """

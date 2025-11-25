@@ -10,6 +10,7 @@ import StaffPage from "./pages/StaffPage";
 import ConsentPage from "./pages/ConsentPage";
 import PrivateRoute from "./routes/PrivateRoute";
 import BaseLayout from "./layout/BaseLayout";
+import VerifyEmailPage from "./pages/VerifyEmailPage"; // nova página (vamos criar em seguida)
 
 const App: React.FC = () => {
   return (
@@ -18,6 +19,7 @@ const App: React.FC = () => {
         {/* públicas */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/cadastro-paciente" element={<PatientSignupPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
 
         {/* protegidas */}
         <Route

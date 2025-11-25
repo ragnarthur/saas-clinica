@@ -27,6 +27,7 @@ from .serializers import (
 )
 from .permissions import HasActiveConsent
 from .services.whatsapp_client import send_appointment_confirmation
+from .services.email_client import send_email_verification
 
 
 class IsClinicStaffOrReadOnly(BasePermission):
@@ -342,12 +343,13 @@ class PublicActiveLegalDocsView(APIView):
 
 class PatientRegisterView(APIView):
     """
-    Endpoint público de cadastro de paciente com fluxo de consentimento LGPD.
+    Endpoint público de cadastro de paciente com fluxo de consentimento LGPD
+    e verificação de e-mail via código numérico de 6 dígitos.
 
     - Não exige autenticação
     - Cria User (role PATIENT) + PatientProfile
-    - Registra UserConsent para TERMOS, PRIVACIDADE e CONSENTIMENTO ativos
-    - Envia e-mail com token de verificação
+    - Registra UserConsent para docs ativos
+    - Gera EmailVerificationToken com código de 6 dígitos e envia e-mail
     """
 
     permission_classes = [permissions.AllowAny]
@@ -355,21 +357,99 @@ class PatientRegisterView(APIView):
     def post(self, request, *args, **kwargs):
         serializer = PatientRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user, patient = serializer.save()
+
+        # serializer retorna (user, patient, email_token)
+        user, patient, email_token = serializer.save()
+
+        # Envia o e-mail de verificação (código de 6 dígitos + link)
+        send_email_verification(user=user, token=email_token.token)
 
         return Response(
             {
+                "detail": (
+                    "Cadastro recebido! Enviamos um código de verificação de 6 dígitos "
+                    "para o seu e-mail. Use o código para ativar o acesso."
+                ),
                 "user_id": str(user.id),
                 "patient_id": str(patient.id),
                 "email": user.email,
-                "full_name": patient.full_name,
                 "clinic_id": str(patient.clinic_id),
-                "detail": (
-                    "Paciente cadastrado com sucesso. "
-                    "Enviamos um e-mail com link de confirmação para ativar o acesso."
-                ),
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class VerifyEmailView(APIView):
+    """
+    Confirma o e-mail de um usuário recém-cadastrado usando
+    um CÓDIGO numérico de 6 dígitos.
+
+    POST /api/auth/verify-email/
+    body: { "token": "123456" }
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        raw_token = request.data.get("token")
+
+        token = (str(raw_token or "")).strip()
+
+        if not token:
+            return Response(
+                {"detail": "Código de verificação é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not token.isdigit() or len(token) != 6:
+            return Response(
+                {"detail": "Código de verificação inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            ev = EmailVerificationToken.objects.select_related("user").get(
+                token=token,
+                is_used=False,
+            )
+        except EmailVerificationToken.DoesNotExist:
+            return Response(
+                {"detail": "Código inválido ou já utilizado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verifica expiração, se configurada
+        if ev.expires_at and ev.expires_at < timezone.now():
+            return Response(
+                {"detail": "Código expirado. Solicite um novo cadastro."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = ev.user
+
+        # Marca token como usado
+        ev.is_used = True
+        ev.used_at = timezone.now()
+        ev.save(update_fields=["is_used", "used_at"])
+
+        # Ativa usuário e marca como verificado
+        user.is_active = True
+        user.is_verified = True
+        user.save(update_fields=["is_active", "is_verified"])
+
+        clinic = getattr(user, "clinic", None)
+        create_audit_log(
+            user=user,
+            clinic=clinic,
+            target_model="CustomUser",
+            target_id=user.id,
+            action=AuditLog.Action.UPDATE,
+            changes={"email_verified": True},
+        )
+
+        return Response(
+            {"detail": "E-mail verificado com sucesso. Você já pode fazer login."},
+            status=status.HTTP_200_OK,
         )
 
 
@@ -588,62 +668,6 @@ class MeView(APIView):
         }
 
         return Response(data, status=status.HTTP_200_OK)
-
-
-class VerifyEmailView(APIView):
-    """
-    Confirma o e-mail de um usuário recém-cadastrado.
-
-    POST /api/auth/verify-email/  { "token": "<uuid-hex>" }
-    """
-
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        token = request.data.get("token")
-
-        if not token:
-            return Response(
-                {"detail": "Token não informado."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            ev = EmailVerificationToken.objects.select_related("user").get(
-                token=token,
-                is_used=False,
-            )
-        except EmailVerificationToken.DoesNotExist:
-            return Response(
-                {"detail": "Token inválido ou já utilizado."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user = ev.user
-
-        # Marca token como usado e ativa usuário
-        ev.is_used = True
-        ev.used_at = timezone.now()
-        ev.save(update_fields=["is_used", "used_at"])
-
-        user.is_active = True
-        user.is_verified = True
-        user.save(update_fields=["is_active", "is_verified"])
-
-        clinic = getattr(user, "clinic", None)
-        create_audit_log(
-            user=user,
-            clinic=clinic,
-            target_model="CustomUser",
-            target_id=user.id,
-            action=AuditLog.Action.UPDATE,
-            changes={"email_verified": True},
-        )
-
-        return Response(
-            {"detail": "E-mail verificado com sucesso. Você já pode fazer login."},
-            status=status.HTTP_200_OK,
-        )
 
 
 class LoggingTokenObtainPairView(SimpleJWTTokenObtainPairView):

@@ -132,3 +132,37 @@
   text-decoration: underline;
   text-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
 }
+
+/* Input de código (OTP) usado na tela de verificação de e-mail */
+
+.otp-input {
+  letter-spacing: 0.35em;
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+/* Botão fantasma usado em "Já tenho conta" e na tela de verify */
+
+.ghost-button {
+  margin-top: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0.55rem 1.3rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.ghost-button:hover {
+  border-color: rgba(56, 189, 248, 0.7);
+  background-color: rgba(15, 23, 42, 0.98);
+  color: var(--text-primary);
+  box-shadow: var(--focus-ring);
+}

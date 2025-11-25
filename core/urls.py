@@ -2,7 +2,6 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
     TokenRefreshView,
 )
 
@@ -16,7 +15,7 @@ from .views import (
     PublicActiveLegalDocsView,
     ConsentActiveDocsView,
     ConsentAcceptView,
-    MeView,  
+    MeView,
     LoggingTokenObtainPairView,
     VerifyEmailView,
 )
@@ -33,10 +32,6 @@ urlpatterns = [
     path("auth/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
 
     # dados do usuário autenticado (secretária / médico / owner)
-    # usado pelo dashboard para mostrar:
-    # - nome da secretária
-    # - clínica atual
-    # - médico com quem a secretária está atuando
     path("auth/me/", MeView.as_view(), name="auth_me"),
 
     # ------------------ PÚBLICO (sem auth) ------------------
@@ -54,7 +49,6 @@ urlpatterns = [
     ),
 
     # ------------------ VERIFICAÇÃO DE EMAIL ------------------
-
     path("auth/verify-email/", VerifyEmailView.as_view(), name="verify-email"),
 
     # ------------------ PACIENTE AUTENTICADO ------------------

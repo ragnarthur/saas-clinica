@@ -13,7 +13,7 @@ export type UserRole =
 
 // Clínica básica
 export type ClinicDTO = {
-  id: number;
+  id: string;
   name: string;
 };
 

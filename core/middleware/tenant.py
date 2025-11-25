@@ -8,6 +8,9 @@ class TenantMiddleware(MiddlewareMixin):
 
     - Usuários autenticados: request.clinic = user.clinic
     - Anônimos: request.clinic = None
+
+    Isso facilita logs, filtros de queryset e qualquer lógica que
+    precise saber em qual clínica (tenant) a requisição está operando.
     """
 
     def process_request(self, request):

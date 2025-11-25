@@ -4,6 +4,8 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { APP_NAME } from "../config/appConfig";
 
+type Status = "idle" | "loading" | "success" | "error";
+
 const VerifyEmailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -11,92 +13,120 @@ const VerifyEmailPage: React.FC = () => {
   // token vindo da query string ?token=...
   const token = searchParams.get("token");
 
-  // se não tiver token, já inicializa em erro
-  const [status, setStatus] = useState<"loading" | "ok" | "error">(
-    token ? "loading" : "error"
-  );
+  const [code, setCode] = useState("");
+  const [status, setStatus] = useState<Status>(token ? "idle" : "error");
   const [message, setMessage] = useState<string>(
     token
-      ? "Confirmando seu cadastro. Aguarde..."
-      : "Token de verificação não encontrado."
+      ? "Digite o código de 6 dígitos que enviamos para o seu e-mail."
+      : "Link de verificação inválido. O token não foi encontrado na URL."
   );
 
-  // título da aba
   useEffect(() => {
     document.title = `Confirmação de e-mail · ${APP_NAME}`;
   }, []);
 
-  useEffect(() => {
-    // sem token -> nada a fazer aqui, já está em erro pelo estado inicial
-    if (!token) return;
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
 
-    let isActive = true;
-
-    async function verify() {
-      try {
-        const data = await apiRequest<{ detail?: string }>(
-          "/auth/verify-email/",
-          {
-            method: "POST",
-            body: { token },
-          }
-        );
-
-        if (!isActive) return;
-
-        setStatus("ok");
-        setMessage(
-          data.detail ||
-            "E-mail verificado com sucesso! Agora você já pode fazer login."
-        );
-      } catch (err: unknown) {
-        console.error("[VERIFY EMAIL ERROR]", err);
-
-        if (!isActive) return;
-
-        if (err instanceof Error) {
-          setStatus("error");
-          setMessage(
-            err.message ||
-              "Não foi possível verificar o e-mail. Tente novamente."
-          );
-        } else {
-          setStatus("error");
-          setMessage(
-            "Não foi possível verificar o e-mail. Tente novamente."
-          );
-        }
-      }
+    if (!token) {
+      setStatus("error");
+      setMessage("Token de verificação não encontrado. Use o link correto do e-mail.");
+      return;
     }
 
-    verify();
+    const trimmedCode = code.trim();
 
-    // cleanup: evita setState depois do unmount
-    return () => {
-      isActive = false;
-    };
-  }, [token]);
+    if (!trimmedCode || trimmedCode.length !== 6) {
+      setStatus("error");
+      setMessage("Informe o código de 6 dígitos exatamente como recebido no e-mail.");
+      return;
+    }
+
+    try {
+      setStatus("loading");
+      setMessage("Confirmando seu e-mail. Aguarde...");
+
+      const data = await apiRequest<{ detail?: string }>("/auth/verify-email/", {
+        method: "POST",
+        body: { token, code: trimmedCode },
+      });
+
+      setStatus("success");
+      setMessage(
+        data.detail ||
+          "E-mail verificado com sucesso! Agora você já pode fazer login na plataforma."
+      );
+    } catch (err: unknown) {
+      console.error("[VERIFY EMAIL ERROR]", err);
+
+      let errorMessage =
+        "Não foi possível verificar o e-mail. Confira o código e tente novamente.";
+
+      if (err instanceof Error && err.message) {
+        errorMessage = err.message;
+      }
+
+      setStatus("error");
+      setMessage(errorMessage);
+    }
+  }
 
   const alertClass =
-    status === "ok"
+    status === "success"
       ? "alert alert-success"
       : status === "error"
       ? "alert alert-error"
       : "alert";
+
+  const isDisabled = status === "loading" || !token;
 
   return (
     <div className="auth-layout">
       <div className="auth-card">
         <header className="auth-header">
           <h1 className="auth-title">Confirmação de e-mail</h1>
+          <p className="auth-subtitle">
+            Para ativar seu acesso, informe o código de 6 dígitos enviado para o seu
+            e-mail.
+          </p>
         </header>
 
         <div className={alertClass}>{message}</div>
 
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label className="form-label" htmlFor="code">
+            Código de verificação
+          </label>
+          <input
+            id="code"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            className="form-input otp-input"
+            placeholder="000000"
+            value={code}
+            disabled={isDisabled}
+            onChange={(e) => {
+              // mantém apenas dígitos
+              const value = e.target.value.replace(/\D/g, "");
+              setCode(value);
+            }}
+          />
+
+          <button
+            type="submit"
+            className="primary-button auth-submit"
+            disabled={isDisabled}
+          >
+            {status === "loading" ? "Confirmando..." : "Confirmar e-mail"}
+          </button>
+        </form>
+
         <footer className="auth-footer">
           <button
             type="button"
-            className="primary-button"
+            className="ghost-button"
             onClick={() => navigate("/login")}
           >
             Ir para o login
